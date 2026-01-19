@@ -873,7 +873,7 @@ function renderAdminUI(links, stats, token, env) {
     '<div class="flex-1 max-w-sm">' +
     '<input id="searchInput" class="w-full px-3 py-2 border rounded-lg text-sm" placeholder="搜索短码或 URL">' +
     "</div>" +
-    '<button id="batchDeleteBtn" class="danger">批量删</button>' +
+    '<button id="batchDeleteBtn" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium">批量删</button>' +
     "</div>" +
     '<div class="overflow-x-auto">' +
     '<table class="min-w-full text-sm">' +
