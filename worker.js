@@ -110,6 +110,9 @@ export default {
     if (path === "/api/create") {
       return handleCreateApi(request, env);
     }
+    if (path === "/create") {
+      return handleCreateHome(request, env);
+    }
     const shortCode = path.slice(1);
     return handleRedirect(request, env, shortCode);
   }
@@ -585,7 +588,7 @@ async function handleCreateApi(request, env) {
   }
   const apiKey = (params.apiKey || params.key || "").trim();
   if (!apiKey) {
-    return new Response("缺少 API key", { status: 400 });
+    return new Response("缺少 API key", { status: 403 });
   }
   const allow = await env.URL_KV.get("api_key_" + apiKey);
   if (!allow) {
@@ -614,6 +617,68 @@ async function handleCreateApi(request, env) {
     if (await env.URL_KV.get(shortCode)) {
       return new Response("短码已存在", { status: 409 });
     }
+  }
+  const maxExpire = getMaxExpireDays(env);
+  if (expireDays > maxExpire) {
+    expireDays = maxExpire;
+  }
+  let expireAt = null;
+  if (expireDays > 0) {
+    expireAt = new Date(Date.now() + expireDays * 24 * 60 * 60 * 1000).toISOString();
+  }
+  const payload = {
+    url: targetUrl,
+    expireAt: expireAt,
+    password: password,
+    redirectType: redirectType
+  };
+  await env.URL_KV.put(shortCode, JSON.stringify(payload));
+  await env.URL_KV.put("stats_" + shortCode, "0");
+  const origin = u.origin;
+  return jsonResponse({
+    shortCode: shortCode,
+    shortUrl: origin + "/" + shortCode,
+    expireAt: expireAt || null
+  });
+}
+
+async function handleCreateHome(request, env) {
+  const u = new URL(request.url);
+  if (request.method !== "POST") {
+    return new Response("Method Not Allowed", { status: 405 });
+  }
+  const params = await request.json().catch(function () {
+    return null;
+  });
+  if (!params) {
+    return new Response("无效请求", { status: 400 });
+  }
+  let shortCode = (params.shortCode || params.code || "").trim();
+  const targetUrl = (params.url || "").trim();
+  let expireDays = parseInt(params.expireDays, 10);
+  if (isNaN(expireDays)) expireDays = getDefaultExpireDays(env);
+  let redirectType = parseInt(params.redirectType, 10) || 302;
+  const password = (params.password || "").trim();
+  if (!targetUrl) {
+    return new Response("缺少 URL", { status: 400 });
+  }
+  if (!isValidUrl(targetUrl)) {
+    return new Response("URL格式无效", { status: 400 });
+  }
+  const maxLen = getMaxShortCodeLength(env);
+  const re = new RegExp("^[A-Za-z0-9]{2," + maxLen + "}$");
+  if (!shortCode) {
+    shortCode = await generateUniqueShortCode(env, 8);
+  } else {
+    if (!re.test(shortCode)) {
+      return new Response("短码格式不合法，长度最大为 " + maxLen, { status: 400 });
+    }
+    if (await env.URL_KV.get(shortCode)) {
+      return new Response("短码已存在", { status: 409 });
+    }
+  }
+  if (!isFrontendExpireSelectEnabled(env)) {
+    expireDays = getDefaultExpireDays(env);
   }
   const maxExpire = getMaxExpireDays(env);
   if (expireDays > maxExpire) {
@@ -977,8 +1042,7 @@ function renderHome(env) {
     "codeInput.addEventListener('input',checkCodeInput);" +
     "codeInput.addEventListener('blur',checkCodeInput);" +
     "if(EXPIRE_ENABLED){var inp=document.getElementById('homeExpireDays');if(inp){inp.value=String(DEFAULT_EXPIRE);}}" +
-    "async function requestAdminToken(){var pwd=prompt('请输入后台密码以创建短链接');if(!pwd)return null;try{var res=await fetch('/admin',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'login',password:pwd})});if(!res.ok)return null;var data=await res.json();localStorage.setItem('adminToken',data.token);return data.token;}catch(e){showToast('获取授权失败');return null;}}" +
-    "async function createShort(){var url=targetInput.value.trim();var code=codeInput.value.trim();if(!url){showToast('请输入目标 URL');return;}if(!code){code=await generateUniqueCode(8);codeInput.value=code;}if(code.length>MAX_LEN){showToast('短码长度不能超过 '+MAX_LEN);return;}if(codeExists){showToast('短码已存在，请更换或随机生成');return;}var token=localStorage.getItem('adminToken');if(!token){token=await requestAdminToken();if(!token)return;}var expireDays=DEFAULT_EXPIRE;if(EXPIRE_ENABLED){var inp=document.getElementById('homeExpireDays');if(inp){var v=parseInt(inp.value,10);if(isNaN(v)||v<0){showToast('请输入合法的过期天数');return;}if(v>MAX_EXPIRE){showToast('过期天数不能超过 '+MAX_EXPIRE);return;}expireDays=v;}}try{var res=await fetch('/admin',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify({action:'add',shortCode:code,url:url,expireDays:expireDays,redirectType:302,password:'',source:'home'})});if(!res.ok){var t=await res.text();showToast(t);return;}var full=window.location.origin+'/'+code;shortUrlSpan.textContent=full;resultBox.classList.remove('hidden');}catch(e){showToast('创建失败');}}" +
+    "async function createShort(){var url=targetInput.value.trim();var code=codeInput.value.trim();if(!url){showToast('请输入目标 URL');return;}if(!code){code=await generateUniqueCode(8);codeInput.value=code;}if(code.length>MAX_LEN){showToast('短码长度不能超过 '+MAX_LEN);return;}if(codeExists){showToast('短码已存在，请更换或随机生成');return;}var expireDays=DEFAULT_EXPIRE;if(EXPIRE_ENABLED){var inp=document.getElementById('homeExpireDays');if(inp){var v=parseInt(inp.value,10);if(isNaN(v)||v<0){showToast('请输入合法的过期天数');return;}if(v>MAX_EXPIRE){showToast('过期天数不能超过 '+MAX_EXPIRE);return;}expireDays=v;}}try{var res=await fetch('/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:code,url:url,expireDays:expireDays,redirectType:302,password:''})});if(!res.ok){var t=await res.text();showToast(t);return;}var data=await res.json();shortUrlSpan.textContent=data.shortUrl||window.location.origin+'/'+code;resultBox.classList.remove('hidden');}catch(e){showToast('创建失败');}}" +
     "createBtn.addEventListener('click',function(){createShort();});" +
     "targetInput.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();createShort();}});" +
     "codeInput.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();createShort();}});" +
